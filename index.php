@@ -28,15 +28,17 @@ $pdo->exec("
 ");
 
 
-
+// get hash from URL
 $hash = $_GET['hash'] ?? '';
 if($hash != '') {
 
+// validate hash format
 if (!preg_match('/^[A-Za-z0-9]{6,9}$/', $hash)) {
     http_response_code(404);
     exit('Link nicht gefunden');
 }
 
+// fetch link from database
 $stmt = $pdo->prepare("
     SELECT *
     FROM shortlinks
@@ -48,9 +50,39 @@ $stmt->execute([$hash]);
 
 $link = $stmt->fetch(PDO::FETCH_ASSOC);
 
+// check if link exists
 if (!$link) {
     http_response_code(404);
     exit('Link nicht gefunden');
+}
+
+// status prüfen
+if ($link['active'] == '0') {
+    http_response_code(410);
+    exit('Link ist deaktiviert');
+}
+
+// Ablaufdatum prüfen
+if ($link['expires_at'] && strtotime($link['expires_at']) < time()) {
+    http_response_code(410);
+    if ($link['active'] != '0') {
+        $pdo->prepare("
+            UPDATE shortlinks
+            SET active = 0
+            WHERE id = ?
+        ")->execute([$link['id']]);
+    }
+    exit('Link ist abgelaufen');
+}
+
+// Passwortschutz prüfen
+if ($link['password_hash']) {
+    if (!isset($_POST['password'])) {
+        // show HTML password input form and stop execution
+
+        $show_password_form = true; 
+
+    }
 }
 
 // Klick zählen
@@ -67,7 +99,8 @@ $pdo->prepare("
     WHERE id = ?
 ")->execute([$link['id']]);
 
-if ($link['type'] === 'url') {
+
+if (($link['type'] === 'url') && !$show_password_form) {
 
     header('Location: ' . $link['target'], true, 302);
     exit;
@@ -119,6 +152,11 @@ function generateHash(int $length = 6): string
     <title>Short-Link erstellen</title>
     <link rel="stylesheet" href="main.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById("target").focus();
+        });
+    </script>
 </head>
 <body>
     <div id="message">
@@ -136,51 +174,93 @@ function generateHash(int $length = 6): string
     <div id="shortlink_qr">
         <?php if (isset($shortlink_qr)) echo $shortlink_qr; ?>
     </div>
+    <?php if (isset($link) && $link['password_hash'] && !isset($_POST['password']) && $show_password_form): ?>
+    <div id="passwort-input" hidden></div>
+        <form action="index.php?hash=<?php echo htmlspecialchars($hash); ?>" method="post">
+            <h2>Für diesen Link ist ein Passwort erforderlich.</h2>
+            <label for="password">Passwort:</label>
+            <input type="password" id="password" name="password" required>
+            <button type="submit">Senden</button>
+        </form>
+    </div>
+    <?php endif; ?>
+    <?php
+    // validate password against hash if password form was submitted
+    if (isset($link) && $link['password_hash'] && isset($_POST['password'])) {
+        if (!password_verify($_POST['password'], $link['password_hash'])) {
+            $error = 'Falsches Passwort';
+        } else {
+            // password is correct, redirect to the target
+            header('Location: ' . $link['target'], true, 302);
+            exit;
+        }
+    }
+    ?>
+
+
     <div id="box">
         <h1>Short-Link erstellen</h1>
         <form action="index.php" method="post">
             <label for="target">Ziel-URL:</label>
-            <input type="url" id="target" name="target" required>
+            <div class="row">
+                <input type="url" id="target" name="target" required>
+                <button type="submit">Link erstellen</button>
+            </div>
             <input type="hidden" name="type" value="url">
             <input type="hidden" name="hash" value="">
             <input type="hidden" name="active" value="1">
             <input type="hidden" name="timecode" value="<?php echo time(); ?>">
-            <div id="settings">
-                <input type="checkbox" id="password_protect" name="password_protect">
-                <label for="password_protect">Passwortschutz aktivieren</label>
-                <div id="password_field" style="display: none;">
+            <details id="settings" open>
+                <summary>
+                    <h3>Optionen</h3>
+                    <span class="material-symbols-outlined center">expand_more</span>
+                </summary>
+                <div class="row">
+                    <label class="switch" for="password_protect">
+                        <input type="checkbox" id="password_protect" name="password_protect">
+                        <span class="slider round"></span>
+                    </label>
+                    <span >Passwortschutz aktivieren</span>
+                </div>
+                <div id="password_field" class="hidden-input" style="display: none;">
                     <label for="password">Passwort:</label>
                     <input type="password" id="password" name="password">
                 </div>
-                <input type="checkbox" id="expiration" name="expiration">
-                <label for="expiration">Ablaufdatum aktivieren</label>
-                <div id="expiration_field" style="display: none;">
+                <div class="row">
+                    <label class="switch" for="expiration">
+                        <input type="checkbox" id="expiration" name="expiration">
+                        <span class="slider round"></span>
+                    </label>
+                    <span >Ablaufdatum aktivieren</span>
+                </div>
+                <div id="expiration_field" class="hidden-input" style="display: none;">
                     <label for="expires_at">Ablaufdatum:</label>
                     <input type="datetime-local" id="expires_at" name="expires_at">
                 </div>
-                <input type="checkbox" id="max_clicks" name="max_clicks">
-                <label for="max_clicks">Maximale Klicks aktivieren</label>
-                <div id="max_clicks_field" style="display: none;">
+                <div class="row">
+                    <label class="switch" for="max_clicks">
+                        <input type="checkbox" id="max_clicks" name="max_clicks">
+                        <span class="slider round"></span>
+                    </label>
+                    <span >Maximale Klicks aktivieren</span>
+                </div>
+                <div id="max_clicks_field" class="hidden-input" style="display: none;">
                     <label for="max_clicks_value">Maximale Klicks:</label>
                     <input type="number" id="max_clicks_value" name="max_clicks_value" min="1">
                 </div>
-                <div id="custom_hash_field">
-                    <label for="custom_hash">Benutzerdefinierter Hash (optional):</label>
-                    <input type="text" id="custom_hash" name="custom_hash" pattern="[A-Za-z0-9]{6,9}" title="6-9 Zeichen, nur Buchstaben und Zahlen">
+                <div class="row">
+                    <label class="switch" for="custom_hash_toggle">
+                        <input type="checkbox" id="custom_hash_toggle" name="custom_hash_toggle">
+                        <span class="slider round"></span>
+                    </label>
+                    <span >Benutzerdefinierter Hash aktivieren</span>
                 </div>
-                <script>
-                    document.getElementById('password_protect').addEventListener('change', function() {
-                        document.getElementById('password_field').style.display = this.checked ? 'block' : 'none';
-                    });
-                    document.getElementById('expiration').addEventListener('change', function() {
-                        document.getElementById('expiration_field').style.display = this.checked ? 'block' : 'none';
-                    });
-                    document.getElementById('max_clicks').addEventListener('change', function() {
-                        document.getElementById('max_clicks_field').style.display = this.checked ? 'block' : 'none';
-                    });
-                </script>
-            </div>
-            <button type="submit">Link erstellen</button>
+                <div id="custom_hash_field" class="hidden-input" style="display: none;">
+                    <label for="custom_hash">Benutzerdefinierter Hash (optional):</label>
+                    <input type="text" id="custom_hash" name="custom_hash" pattern="[A-Za-z0-9]{255}" title="max. 255 Zeichen, nur Buchstaben und Zahlen">
+                </div>
+                
+            </details>
         </form>
     </div>
     <div id="footer">
@@ -193,7 +273,7 @@ function generateHash(int $length = 6): string
             </label>
             <span class="material-symbols-outlined">dark_mode</span>
         <script src="mode.js"></script>
-    </div>
+        </div>
     </div>
 </body>
 </html>
@@ -203,13 +283,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
     $target = $_POST['target'] ?? '';
     $type = $_POST['type'] ?? 'url';
+
     // extract the URL from the target if needed
     if ($type === 'url') {
-        $url = filter_var($target, FILTER_VALIDATE_URL);
-        if ($url === false) {
-            $error = 'Ungültige URL.';
-            return;
-        }
+        $url = parse_url($target, PHP_URL_HOST); // parse URL for type 'url' from the target
     }
     $active = $_POST['active'] ?? 1;
     $expires_at = $_POST['expires_at'] ?? null;
@@ -236,8 +313,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Generate hash
     if (!empty($custom_hash)) {
-        if (!preg_match('/^[A-Za-z0-9]{6,9}$/', $custom_hash)) {
-            $error = 'Benutzerdefinierter Hash muss 6-9 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
+        if (!preg_match('/^[A-Za-z0-9]{255}$/', $custom_hash)) {
+            $error = 'Benutzerdefinierter Hash darf max. 255 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
             return;
         }
         // Check if custom hash already exists
@@ -279,6 +356,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $max_clicks_enabled ? $max_clicks_value : null,
         $_SERVER['REMOTE_ADDR']
     ]);
+
+    $success = 'Short-Link erfolgreich erstellt!';
 
     $shortlink = "https://" . $serverName . "/" . $hash;
 

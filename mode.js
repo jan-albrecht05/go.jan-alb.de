@@ -25,3 +25,30 @@
     }
     applyTheme(toggleCheckbox.checked ? 'dark' : 'light');
 })();
+
+// alle anderen toggle-switches (z.B. Passwortschutz) auf der Seite
+
+document.getElementById('password_protect').addEventListener('change', function() {
+    document.getElementById('password_field').style.display = this.checked ? 'block' : 'none';
+    if (this.checked){
+        document.getElementById('password').focus();
+    }
+});
+document.getElementById('expiration').addEventListener('change', function() {
+    document.getElementById('expiration_field').style.display = this.checked ? 'block' : 'none';
+    if (this.checked){
+        document.getElementById('expires_at').focus();
+    }
+});
+document.getElementById('max_clicks').addEventListener('change', function() {
+    document.getElementById('max_clicks_field').style.display = this.checked ? 'block' : 'none';
+    if (this.checked){
+        document.getElementById('max_clicks_value').focus();
+    }
+});
+document.getElementById('custom_hash_toggle').addEventListener('change', function() {
+    document.getElementById('custom_hash_field').style.display = this.checked ? 'block' : 'none';
+    if (this.checked){
+        document.getElementById('custom_hash_value').focus();
+    }
+});
