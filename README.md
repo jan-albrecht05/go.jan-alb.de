@@ -147,10 +147,10 @@ This prevents path traversal attacks and accidental exposure of server files.
 
 Planned features:
 
-* [ ] Expiration dates
-* [ ] Password protected links
-* [ ] Maximum click limits
-* [ ] QR code generation
+* [x] Expiration dates
+* [x] Password protected links
+* [x] Maximum click limits
+* [x] QR code generation
 * [ ] Admin panel
 * [ ] Link analytics
 

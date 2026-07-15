@@ -1,9 +1,18 @@
 <?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 
 // Hauptdatenbankverbindung
 $db_path = __DIR__ . '/database.db';
 $pdo = new PDO("sqlite:$db_path");
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$message = null;
+$error = null;
+$success = null;
+$shortlink = null;
+$show_normal_form = true;
+$show_password_form = false;
 
 $serverName = $_SERVER['SERVER_NAME'];
 
@@ -33,9 +42,9 @@ $hash = $_GET['hash'] ?? '';
 if($hash != '') {
 
 // validate hash format
-if (!preg_match('/^[A-Za-z0-9]{6,9}$/', $hash)) {
+if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $hash)) {
     http_response_code(404);
-    exit('Link nicht gefunden');
+    $error = 'Link nicht gefunden';
 }
 
 // fetch link from database
@@ -77,28 +86,43 @@ if ($link['expires_at'] && strtotime($link['expires_at']) < time()) {
 
 // Passwortschutz prüfen
 if ($link['password_hash']) {
-    if (!isset($_POST['password'])) {
-        // show HTML password input form and stop execution
-
-        $show_password_form = true; 
-
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        $show_password_form = true;
+    } else {
+        if (!password_verify($_POST['password'] ?? '', $link['password_hash'])) {
+            $show_password_form = true;
+            $error = 'Falsches Passwort';
+        }
     }
 }
 
-// Klick zählen
-$pdo->prepare("
-    UPDATE shortlinks
-    SET clicks = clicks + 1
-    WHERE id = ?
-")->execute([$link['id']]);
+if(!$show_password_form) {
+    // Maximale Klicks prüfen
+    if ($link['max_clicks'] !== null && $link['clicks'] >= $link['max_clicks']) {
+        http_response_code(410);
+        if ($link['active'] != '0') {
+            $pdo->prepare("
+                UPDATE shortlinks
+                SET active = 0
+                WHERE id = ?
+            ")->execute([$link['id']]);
+        }
+        exit('Maximale Klicks erreicht');
+    }
+    // Klick zählen
+    $pdo->prepare("
+        UPDATE shortlinks
+        SET clicks = clicks + 1
+        WHERE id = ?
+    ")->execute([$link['id']]);
 
-// Letzten Klickzeitpunkt aktualisieren
-$pdo->prepare("
-    UPDATE shortlinks
-    SET last_click = CURRENT_TIMESTAMP
-    WHERE id = ?
-")->execute([$link['id']]);
-
+    // Letzten Klickzeitpunkt aktualisieren
+    $pdo->prepare("
+        UPDATE shortlinks
+        SET last_click = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ")->execute([$link['id']]);
+}
 
 if (($link['type'] === 'url') && !$show_password_form) {
 
@@ -125,7 +149,6 @@ if ($link['type'] === 'file') {
 }
 
 http_response_code(500);
-echo 'Ungültiger Linktyp';
 }
 function generateHash(int $length = 6): string
 {
@@ -144,6 +167,107 @@ function generateHash(int $length = 6): string
 
 ?>
 
+
+<?php
+// form handling
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    
+    $target = $_POST['target'] ?? '';
+    $type = $_POST['type'] ?? 'url';
+
+    // extract the URL from the target if needed
+    if ($type === 'url') {
+        $url = parse_url($target, PHP_URL_HOST); // parse URL for type 'url' from the target
+    }
+    $active = $_POST['active'] ?? 1;
+    $expires_at = $_POST['expires_at'] ?? null;
+    $password_protect = isset($_POST['password_protect']) ? true : false;
+    $password = $_POST['password'] ?? null;
+    $max_clicks_enabled = isset($_POST['max_clicks']) ? true : false;
+    $max_clicks_value = $_POST['max_clicks_value'] ?? null;
+    $custom_hash = $_POST['custom_hash'] ?? null;
+
+    if ($target === '') {
+        $error = 'Ziel-URL darf nicht leer sein.';
+    }
+
+    if ($password_protect && empty($password)) {
+        $error = 'Passwort darf nicht leer sein, wenn Passwortschutz aktiviert ist.';
+    }
+
+    if ($max_clicks_enabled && (empty($max_clicks_value) || !is_numeric($max_clicks_value) || $max_clicks_value < 1)) {
+        $error = 'Maximale Klicks muss eine positive Zahl sein.';
+    }
+
+    // Generate hash
+    if (!empty($custom_hash)) {
+        if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $custom_hash)) {
+            $error = 'Benutzerdefinierter Hash darf max. 255 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
+        }
+        // Check if custom hash already exists
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM shortlinks WHERE hash = ?");
+        $stmt->execute([$custom_hash]);
+        if ($stmt->fetchColumn() > 0) {
+            $error = 'Benutzerdefinierter Hash ist bereits vergeben. Bitte wählen Sie einen anderen.';
+        }
+        $hash = $custom_hash;
+    } else {
+        do {
+            $hash = generateHash();
+            // Check if hash already exists
+            $stmt = $pdo->prepare("SELECT COUNT(*) FROM shortlinks WHERE hash = ?");
+            $stmt->execute([$hash]);
+        } while ($stmt->fetchColumn() > 0);
+    }
+
+    // Hash password if password protection is enabled
+    $password_hash = null;
+    if ($password_protect) {
+        $password_hash = password_hash($password, PASSWORD_DEFAULT);
+    }
+
+    if(!$error){
+        try{
+            // Insert into database
+            $stmt = $pdo->prepare("
+            INSERT INTO shortlinks (hash, target, type, url, active, expires_at, password_hash, max_clicks, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $hash,
+                $target,
+                $type,
+                $url,
+                $active,
+                $expires_at,
+                $password_hash,
+                $max_clicks_enabled ? $max_clicks_value : null,
+                $_SERVER['REMOTE_ADDR']
+            ]);
+        } catch (PDOException $e) {
+            $error = 'Fehler beim Erstellen des Short-Links: ' . $e->getMessage();
+        }
+        $success = 'Short-Link erfolgreich erstellt!';
+        $shortlink = "https://" . $serverName . "/" . $hash;
+        if($shortlink) {
+            $show_normal_form = false;
+        }
+    }
+
+    // copy to clipboard script
+    echo "<script>
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(function() {
+                alert('Short-Link in die Zwischenablage kopiert: ' + text);
+            }, function(err) {
+                console.error('Fehler beim Kopieren in die Zwischenablage: ', err);
+            });
+        }
+        copyToClipboard('$shortlink');
+    </script>";
+}
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -156,61 +280,81 @@ function generateHash(int $length = 6): string
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById("target").focus();
         });
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(function() {
+                alert('Short-Link in die Zwischenablage kopiert: ' + text);
+            }, function(err) {
+                console.error('Fehler beim Kopieren in die Zwischenablage: ', err);
+            });
+        }
     </script>
 </head>
 <body>
-    <div id="message">
-        <?php if (isset($message)) echo htmlspecialchars($message); ?>
-    </div>
-    <div id="error">
-        <?php if (isset($error)) echo htmlspecialchars($error); ?>
-    </div>
-    <div id="success">
-        <?php if (isset($success)) echo htmlspecialchars($success); ?>
-    </div>
-    <div id="shortlink">
-        <?php if (isset($shortlink)) echo htmlspecialchars($shortlink); ?>
-    </div>
-    <div id="shortlink_qr">
-        <?php if (isset($shortlink_qr)) echo $shortlink_qr; ?>
-    </div>
-    <?php if (isset($link) && $link['password_hash'] && !isset($_POST['password']) && $show_password_form): ?>
-    <div id="passwort-input" hidden></div>
-        <form action="index.php?hash=<?php echo htmlspecialchars($hash); ?>" method="post">
-            <h2>Für diesen Link ist ein Passwort erforderlich.</h2>
-            <label for="password">Passwort:</label>
-            <input type="password" id="password" name="password" required>
-            <button type="submit">Senden</button>
-        </form>
-    </div>
+    <?php if($message): ?>
+        <div id="message" class="notification"><?= htmlspecialchars($message) ?></div>
     <?php endif; ?>
-    <?php
-    // validate password against hash if password form was submitted
-    if (isset($link) && $link['password_hash'] && isset($_POST['password'])) {
-        if (!password_verify($_POST['password'], $link['password_hash'])) {
-            $error = 'Falsches Passwort';
-        } else {
-            // password is correct, redirect to the target
-            header('Location: ' . $link['target'], true, 302);
-            exit;
-        }
-    }
-    ?>
+    <?php if($error): ?>
+        <div id="error" class="notification error"><?= htmlspecialchars($error) ?></div>
+    <?php endif; ?>
 
+    <?php if($success): ?>
+        <div id="success" class="notification success"><?= htmlspecialchars($success) ?></div>
+    <?php endif; ?>
 
+    <?php if($shortlink): ?>
+        <div id="shortlink" class="notification success">
+            <div class="row">
+                <a id="shortlink-url" href="<?= htmlspecialchars($shortlink) ?>" target="_blank"><?= htmlspecialchars($shortlink) ?></a>
+                <button onclick="copyToClipboard('<?= htmlspecialchars($shortlink) ?>')">📋 Kopieren</button>
+            </div>
+            <div id="qr-code">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=<?= urlencode($shortlink) ?>" alt="QR Code">
+            </div>
+            <div id="back-link">
+                <a href="index.php">Neuen Link erstellen</a>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <?php if($show_password_form): ?>
+        <!-- Password form -->
+        <div id="box">
+            <h1>🔒 Passwort erforderlich</h1>
+            <form method="post">
+                <input type="password" name="password" placeholder="Passwort" autofocus required>
+                <button>Anmelden</button>
+            </form>
+        </div>
+        <?php
+            // validate password against hash if password form was submitted
+            if (isset($link) && $link['password_hash'] && isset($_POST['password'])) {
+                if (!password_verify($_POST['password'], $link['password_hash'])) {
+                    $error = 'Falsches Passwort';
+                } else {
+                    // password is correct, redirect to the target
+                    header('Location: ' . $link['target'], true, 302);
+                    exit;
+                }
+            }
+        ?>
+
+    <?php else:  ?>
+    <?php if($show_normal_form): ?>
+    <!-- normales Formular -->
     <div id="box">
         <h1>Short-Link erstellen</h1>
         <form action="index.php" method="post">
             <label for="target">Ziel-URL:</label>
             <div class="row">
-                <input type="url" id="target" name="target" required>
+                <input type="text" id="target" name="target" required>
                 <button type="submit">Link erstellen</button>
             </div>
             <input type="hidden" name="type" value="url">
             <input type="hidden" name="hash" value="">
             <input type="hidden" name="active" value="1">
             <input type="hidden" name="timecode" value="<?php echo time(); ?>">
-            <details id="settings" open>
+            <details id="settings">
                 <summary>
                     <h3>Optionen</h3>
                     <span class="material-symbols-outlined center">expand_more</span>
@@ -257,14 +401,16 @@ function generateHash(int $length = 6): string
                 </div>
                 <div id="custom_hash_field" class="hidden-input" style="display: none;">
                     <label for="custom_hash">Benutzerdefinierter Hash (optional):</label>
-                    <input type="text" id="custom_hash" name="custom_hash" pattern="[A-Za-z0-9]{255}" title="max. 255 Zeichen, nur Buchstaben und Zahlen">
+                    <input type="text" id="custom_hash" name="custom_hash" pattern="[A-Za-z0-9]{3,255}" title="max. 255 Zeichen, nur Buchstaben und Zahlen">
                 </div>
                 
             </details>
         </form>
     </div>
+<?php endif; ?>
+<?php endif; ?>
     <div id="footer">
-        <p>&copy; <?php echo date('Y'); ?> Short-Link Service</p>
+        <p>&copy; <?php echo date('Y') . ' ' . $serverName; ?> </p>
         <div id="mode-toggle" class="center">
             <span class="material-symbols-outlined">light_mode</span>
             <label class="switch">
@@ -275,91 +421,9 @@ function generateHash(int $length = 6): string
         <script src="mode.js"></script>
         </div>
     </div>
+    <a id="login-link" href="admin.php">
+        <span class="material-symbols-outlined">admin_panel_settings</span>
+    </a>
+    </div>
 </body>
 </html>
-<?php
-// form handling
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    
-    $target = $_POST['target'] ?? '';
-    $type = $_POST['type'] ?? 'url';
-
-    // extract the URL from the target if needed
-    if ($type === 'url') {
-        $url = parse_url($target, PHP_URL_HOST); // parse URL for type 'url' from the target
-    }
-    $active = $_POST['active'] ?? 1;
-    $expires_at = $_POST['expires_at'] ?? null;
-    $password_protect = isset($_POST['password_protect']) ? true : false;
-    $password = $_POST['password'] ?? null;
-    $max_clicks_enabled = isset($_POST['max_clicks']) ? true : false;
-    $max_clicks_value = $_POST['max_clicks_value'] ?? null;
-    $custom_hash = $_POST['custom_hash'] ?? null;
-
-    if ($target === '') {
-        $error = 'Ziel-URL darf nicht leer sein.';
-        return;
-    }
-
-    if ($password_protect && empty($password)) {
-        $error = 'Passwort darf nicht leer sein, wenn Passwortschutz aktiviert ist.';
-        return;
-    }
-
-    if ($max_clicks_enabled && (empty($max_clicks_value) || !is_numeric($max_clicks_value) || $max_clicks_value < 1)) {
-        $error = 'Maximale Klicks muss eine positive Zahl sein.';
-        return;
-    }
-
-    // Generate hash
-    if (!empty($custom_hash)) {
-        if (!preg_match('/^[A-Za-z0-9]{255}$/', $custom_hash)) {
-            $error = 'Benutzerdefinierter Hash darf max. 255 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
-            return;
-        }
-        // Check if custom hash already exists
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM shortlinks WHERE hash = ?");
-        $stmt->execute([$custom_hash]);
-        if ($stmt->fetchColumn() > 0) {
-            $error = 'Benutzerdefinierter Hash ist bereits vergeben. Bitte wählen Sie einen anderen.';
-            return;
-        }
-        $hash = $custom_hash;
-    } else {
-        do {
-            $hash = generateHash();
-            // Check if hash already exists
-            $stmt = $pdo->prepare("SELECT COUNT(*) FROM shortlinks WHERE hash = ?");
-            $stmt->execute([$hash]);
-        } while ($stmt->fetchColumn() > 0);
-    }
-
-    // Hash password if password protection is enabled
-    $password_hash = null;
-    if ($password_protect) {
-        $password_hash = password_hash($password, PASSWORD_DEFAULT);
-    }
-
-    // Insert into database
-    $stmt = $pdo->prepare("
-        INSERT INTO shortlinks (hash, target, type, url, active, expires_at, password_hash, max_clicks, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ");
-    $stmt->execute([
-        $hash,
-        $target,
-        $type,
-        $url,
-        $active,
-        $expires_at,
-        $password_hash,
-        $max_clicks_enabled ? $max_clicks_value : null,
-        $_SERVER['REMOTE_ADDR']
-    ]);
-
-    $success = 'Short-Link erfolgreich erstellt!';
-
-    $shortlink = "https://" . $serverName . "/" . $hash;
-
-}
-?>
