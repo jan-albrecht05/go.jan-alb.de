@@ -9,6 +9,7 @@ $pdo = new PDO("sqlite:$db_path");
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $message = null;
 $error = null;
+$errors = [];
 $success = null;
 $shortlink = null;
 $show_normal_form = true;
@@ -21,7 +22,7 @@ $serverName = $_SERVER['SERVER_NAME'];
 $pdo->exec("
     CREATE TABLE IF NOT EXISTS shortlinks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        hash VARCHAR(9) NOT NULL UNIQUE,
+        hash VARCHAR(255) NOT NULL UNIQUE,
         target TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'url',
         url TEXT NULL,
@@ -39,20 +40,21 @@ $pdo->exec("
 
 // get hash from URL
 $hash = $_GET['hash'] ?? '';
-if($hash != '') {
+if($hash !== '') {
 
-// validate hash format
-if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $hash)) {
-    http_response_code(404);
-    $error = 'Link nicht gefunden';
-}
+    // validate hash format
+    if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $hash)) {
+        http_response_code(404);
+    $errors[] = 'Link nicht gefunden';
+    $show_normal_form = false;
+    } else {
+
 
 // fetch link from database
 $stmt = $pdo->prepare("
     SELECT *
     FROM shortlinks
     WHERE hash = ?
-    AND active = 1
     LIMIT 1
 ");
 $stmt->execute([$hash]);
@@ -62,26 +64,29 @@ $link = $stmt->fetch(PDO::FETCH_ASSOC);
 // check if link exists
 if (!$link) {
     http_response_code(404);
-    exit('Link nicht gefunden');
+    $errors[] = 'Link nicht gefunden';
+    $show_normal_form = false;
 }
 
 // status prüfen
 if ($link['active'] == '0') {
     http_response_code(410);
-    exit('Link ist deaktiviert');
+    $errors[] = 'Link ist deaktiviert';
+    $show_normal_form = false;
 }
 
 // Ablaufdatum prüfen
 if ($link['expires_at'] && strtotime($link['expires_at']) < time()) {
     http_response_code(410);
-    if ($link['active'] != '0') {
+    $error = "Dieser Link ist abgelaufen.";
+    if ($link['active']) {
         $pdo->prepare("
             UPDATE shortlinks
             SET active = 0
             WHERE id = ?
         ")->execute([$link['id']]);
     }
-    exit('Link ist abgelaufen');
+    $show_normal_form = false;
 }
 
 // Passwortschutz prüfen
@@ -91,7 +96,7 @@ if ($link['password_hash']) {
     } else {
         if (!password_verify($_POST['password'] ?? '', $link['password_hash'])) {
             $show_password_form = true;
-            $error = 'Falsches Passwort';
+            $errors[] = 'Falsches Passwort';
         }
     }
 }
@@ -107,7 +112,8 @@ if(!$show_password_form) {
                 WHERE id = ?
             ")->execute([$link['id']]);
         }
-        exit('Maximale Klicks erreicht');
+        $errors[] = 'Maximale Aufrufe erreicht';
+        $show_normal_form = false;
     }
     // Klick zählen
     $pdo->prepare("
@@ -127,7 +133,7 @@ if(!$show_password_form) {
 if (($link['type'] === 'url') && !$show_password_form) {
 
     header('Location: ' . $link['target'], true, 302);
-    exit;
+    $show_normal_form = false;
 
 }
 
@@ -137,7 +143,8 @@ if ($link['type'] === 'file') {
 
     if (!file_exists($file)) {
         http_response_code(404);
-        exit('Datei nicht gefunden');
+        $errors[] = 'Datei nicht gefunden';
+        $show_normal_form = false;
     }
 
     header('Content-Type: application/octet-stream');
@@ -145,8 +152,8 @@ if ($link['type'] === 'file') {
     header('Content-Length: ' . filesize($file));
 
     readfile($file);
-    exit;
-}
+    $show_normal_form = false;
+}}
 
 http_response_code(500);
 }
@@ -170,11 +177,17 @@ function generateHash(int $length = 6): string
 
 <?php
 // form handling
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create') {
     
     $target = $_POST['target'] ?? '';
+    if (!str_starts_with($target, 'http://') && !str_starts_with($target, 'https://')) {
+    $target = 'https://' . $target;
+}
     $type = $_POST['type'] ?? 'url';
-
+    // validate URL
+    if (!filter_var($target, FILTER_VALIDATE_URL)) {
+        $error = 'Bitte eine gültige URL eingeben.';
+    }
     // extract the URL from the target if needed
     if ($type === 'url') {
         $url = parse_url($target, PHP_URL_HOST); // parse URL for type 'url' from the target
@@ -226,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password_hash = password_hash($password, PASSWORD_DEFAULT);
     }
 
-    if(!$error){
+    if(!$errors){
         try{
             // Insert into database
             $stmt = $pdo->prepare("
@@ -253,18 +266,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $show_normal_form = false;
         }
     }
-
-    // copy to clipboard script
-    echo "<script>
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(function() {
-                alert('Short-Link in die Zwischenablage kopiert: ' + text);
-            }, function(err) {
-                console.error('Fehler beim Kopieren in die Zwischenablage: ', err);
-            });
-        }
-        copyToClipboard('$shortlink');
-    </script>";
 }
 ?>
 
@@ -294,12 +295,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php if($message): ?>
         <div id="message" class="notification"><?= htmlspecialchars($message) ?></div>
     <?php endif; ?>
-    <?php if($error): ?>
-        <div id="error" class="notification error"><?= htmlspecialchars($error) ?></div>
-    <?php endif; ?>
-
-    <?php if($success): ?>
-        <div id="success" class="notification success"><?= htmlspecialchars($success) ?></div>
+    <?php if($errors): ?>
+        <?php foreach($errors as $error): ?>
+            <div class="notification error"><?= htmlspecialchars($error) ?></div>
+        <?php endforeach; ?>
     <?php endif; ?>
 
     <?php if($shortlink): ?>
@@ -323,21 +322,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h1>🔒 Passwort erforderlich</h1>
             <form method="post">
                 <input type="password" name="password" placeholder="Passwort" autofocus required>
+                <input type="hidden" name="action" value="unlock">
                 <button>Anmelden</button>
             </form>
         </div>
-        <?php
-            // validate password against hash if password form was submitted
-            if (isset($link) && $link['password_hash'] && isset($_POST['password'])) {
-                if (!password_verify($_POST['password'], $link['password_hash'])) {
-                    $error = 'Falsches Passwort';
-                } else {
-                    // password is correct, redirect to the target
-                    header('Location: ' . $link['target'], true, 302);
-                    exit;
-                }
-            }
-        ?>
 
     <?php else:  ?>
     <?php if($show_normal_form): ?>
@@ -345,6 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div id="box">
         <h1>Short-Link erstellen</h1>
         <form action="index.php" method="post">
+            <input type="hidden" name="action" value="create">
             <label for="target">Ziel-URL:</label>
             <div class="row">
                 <input type="text" id="target" name="target" required>

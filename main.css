@@ -274,7 +274,7 @@ details{
     margin-top: 10px;
     text-align: center;
 }
-#error {
+.error {
     background-color: var(--error-color);
     color: white;
 }
