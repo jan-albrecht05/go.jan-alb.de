@@ -263,14 +263,21 @@ details{
 
 /* Messages and Errors */
 .notification {
-    padding: 10px;
-    border-radius: 5px;
+    padding: 20px;
+    border-radius: 10px;
     margin-top: 10px;
     text-align: center;
+    font-size: 1.2rem;
+    font-weight: bold 600;
+    letter-spacing: 2px;
+}
+.notification.error span.material-symbols-outlined{
+    margin-right: 8px;
+    font-size: 2rem;
 }
 #message {
-    padding: 10px;
-    border-radius: 5px;
+    padding: 20px;
+    border-radius: 10px;
     margin-top: 10px;
     text-align: center;
 }
@@ -340,14 +347,11 @@ details{
     color: var(--lightgrey2)
 }
 
-
 @media (max-width:768px){
-
     body{
         padding:20px;
         height:80%;
     }
-
     #box{
         width:100%;
         max-width:100%;
@@ -355,41 +359,41 @@ details{
         margin-top:20px;
         box-sizing:border-box;
     }
-
     h1{
         font-size:1.8rem;
         text-align:center;
     }
-
     .row{
         flex-direction:column;
         align-items:stretch;
     }
-
     .row input{
         width:100%;
         box-sizing:border-box;
     }
-
     button{
         width:100%;
     }
-
     #shortlink{
         font-size:1.2rem;
         word-break:break-all;
         padding:15px;
     }
-
     #footer{
         margin-top:30px;
         padding-bottom:20px;
     }
-
     #login-link{
         right:15px;
         bottom:15px;
         font-size:1.6rem;
     }
-
+    .notification {
+        padding: 10px;
+        border-radius: 5px;
+        font-size: 1rem;
+    }
+    .notification.error span.material-symbols-outlined{
+        font-size: 1.5rem;
+    }
 }

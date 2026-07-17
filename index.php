@@ -2,6 +2,7 @@
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
+date_default_timezone_set('Europe/Berlin');
 
 // Hauptdatenbankverbindung
 $db_path = __DIR__ . '/database.db';
@@ -66,7 +67,7 @@ if (!$link) {
     http_response_code(404);
     $errors[] = 'Link nicht gefunden';
     $show_normal_form = false;
-}
+} else {
 
 // status prüfen
 if ($link['active'] == '0') {
@@ -76,21 +77,20 @@ if ($link['active'] == '0') {
 }
 
 // Ablaufdatum prüfen
-if ($link['expires_at'] && strtotime($link['expires_at']) < time()) {
-    http_response_code(410);
-    $error = "Dieser Link ist abgelaufen.";
-    if ($link['active']) {
-        $pdo->prepare("
-            UPDATE shortlinks
-            SET active = 0
-            WHERE id = ?
-        ")->execute([$link['id']]);
+if (!empty($link['expires_at'])) {
+    $expires = strtotime($link['expires_at']);
+    if ($expires !== false && $expires <= time()) {
+        if ((int)$link['active'] === 1) {
+            $pdo->prepare("UPDATE shortlinks SET active = 0 WHERE id = ?")->execute([$link['id']]);
+        }
+        http_response_code(410);
+        $errors[] = 'Dieser Link ist abgelaufen.';
+        $show_normal_form = false;
     }
-    $show_normal_form = false;
 }
 
 // Passwortschutz prüfen
-if ($link['password_hash']) {
+if ($link['password_hash'] && empty($errors)) {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         $show_password_form = true;
     } else {
@@ -101,11 +101,11 @@ if ($link['password_hash']) {
     }
 }
 
-if(!$show_password_form) {
+if(!$show_password_form && empty($errors)) {
     // Maximale Klicks prüfen
     if ($link['max_clicks'] !== null && $link['clicks'] >= $link['max_clicks']) {
         http_response_code(410);
-        if ($link['active'] != '0') {
+        if ((int)$link['active'] === 1) {
             $pdo->prepare("
                 UPDATE shortlinks
                 SET active = 0
@@ -130,13 +130,6 @@ if(!$show_password_form) {
     ")->execute([$link['id']]);
 }
 
-if (($link['type'] === 'url') && !$show_password_form) {
-
-    header('Location: ' . $link['target'], true, 302);
-    $show_normal_form = false;
-
-}
-
 if ($link['type'] === 'file') {
 
     $file = $link['target'];
@@ -154,8 +147,22 @@ if ($link['type'] === 'file') {
     readfile($file);
     $show_normal_form = false;
 }}
+if (!$show_password_form && empty($errors)) {
+    if ($link['type'] === 'url') {
+        header('Location: ' . $link['target'], true, 302);
+        $show_normal_form = false;
+        exit;
+    }
+    if ($link['type'] === 'file') {
+        readfile($file);
+        exit;
+    }
 
-http_response_code(500);
+    http_response_code(500);
+    $errors[] = "Unbekannter Linktyp.";
+    $show_normal_form = false;
+}}
+
 }
 function generateHash(int $length = 6): string
 {
@@ -186,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     $type = $_POST['type'] ?? 'url';
     // validate URL
     if (!filter_var($target, FILTER_VALIDATE_URL)) {
-        $error = 'Bitte eine gültige URL eingeben.';
+        $errors [] = 'Bitte eine gültige URL eingeben.';
     }
     // extract the URL from the target if needed
     if ($type === 'url') {
@@ -201,27 +208,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     $custom_hash = $_POST['custom_hash'] ?? null;
 
     if ($target === '') {
-        $error = 'Ziel-URL darf nicht leer sein.';
+        $errors[] = 'Ziel-URL darf nicht leer sein.';
     }
 
     if ($password_protect && empty($password)) {
-        $error = 'Passwort darf nicht leer sein, wenn Passwortschutz aktiviert ist.';
+        $errors[] = 'Passwort darf nicht leer sein, wenn Passwortschutz aktiviert ist.';
     }
 
     if ($max_clicks_enabled && (empty($max_clicks_value) || !is_numeric($max_clicks_value) || $max_clicks_value < 1)) {
-        $error = 'Maximale Klicks muss eine positive Zahl sein.';
+        $errors[] = 'Maximale Klicks muss eine positive Zahl sein.';
     }
 
     // Generate hash
     if (!empty($custom_hash)) {
         if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $custom_hash)) {
-            $error = 'Benutzerdefinierter Hash darf max. 255 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
+            $errors[] = 'Benutzerdefinierter Hash darf max. 255 Zeichen lang sein und nur Buchstaben und Zahlen enthalten.';
         }
         // Check if custom hash already exists
         $stmt = $pdo->prepare("SELECT COUNT(*) FROM shortlinks WHERE hash = ?");
         $stmt->execute([$custom_hash]);
         if ($stmt->fetchColumn() > 0) {
-            $error = 'Benutzerdefinierter Hash ist bereits vergeben. Bitte wählen Sie einen anderen.';
+            $errors[] = 'Benutzerdefinierter Hash ist bereits vergeben. Bitte wählen Sie einen anderen.';
         }
         $hash = $custom_hash;
     } else {
@@ -239,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
         $password_hash = password_hash($password, PASSWORD_DEFAULT);
     }
 
-    if(!$errors){
+    if(empty($errors)){
         try{
             // Insert into database
             $stmt = $pdo->prepare("
@@ -258,7 +265,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
                 $_SERVER['REMOTE_ADDR']
             ]);
         } catch (PDOException $e) {
-            $error = 'Fehler beim Erstellen des Short-Links: ' . $e->getMessage();
+            $errors[] = 'Fehler beim Erstellen des Short-Links: ' . $e->getMessage();
         }
         $success = 'Short-Link erfolgreich erstellt!';
         $shortlink = "https://" . $serverName . "/" . $hash;
@@ -297,7 +304,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     <?php endif; ?>
     <?php if($errors): ?>
         <?php foreach($errors as $error): ?>
-            <div class="notification error"><?= htmlspecialchars($error) ?></div>
+            <div class="notification error center">
+                <span class="material-symbols-outlined">error</span>
+                <?= htmlspecialchars($error) ?>
+            </div>
         <?php endforeach; ?>
     <?php endif; ?>
 
@@ -323,7 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
             <form method="post">
                 <input type="password" name="password" placeholder="Passwort" autofocus required>
                 <input type="hidden" name="action" value="unlock">
-                <button>Anmelden</button>
+                <button>Weiter</button>
             </form>
         </div>
 
