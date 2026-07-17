@@ -1,11 +1,13 @@
 <?php
+session_start();
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 date_default_timezone_set('Europe/Berlin');
+$is_admin = $_SESSION['is_admin'] ?? false;
 
 // Hauptdatenbankverbindung
-$db_path = __DIR__ . '/database.db';
+$db_path = __DIR__ . '/../database.db';
 $pdo = new PDO("sqlite:$db_path");
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $message = null;
@@ -68,6 +70,13 @@ if (!$link) {
     $errors[] = 'Link nicht gefunden';
     $show_normal_form = false;
 } else {
+
+    // check for Admin access
+    if($is_admin) {
+        // admins can view the link without restrictions
+        header('Location: ' . $link['target'], true, 302);
+        exit;
+    }
 
 // status prüfen
 if ($link['active'] == '0') {
