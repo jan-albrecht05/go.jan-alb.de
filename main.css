@@ -54,6 +54,9 @@ a:visited{
 
 html{
     height: 100lvh;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: var(--lightgrey2) var(--lightgrey);
 }
 body{
     background: var(--gradient);
@@ -367,6 +370,23 @@ details{
 }
 
 /* Admin */
+#logout-button {
+    position: fixed;
+    top: 30px;
+    right: 30px;
+    font-size: 1rem;
+    z-index: 1000;
+    color: var(--text-color);
+    background: none;
+    border: 2px solid var(--text-color);
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+#logout-button:hover {
+    background: #00000033;
+}
+
 #login-link {
     position: fixed;
     bottom: 30px;
@@ -419,7 +439,15 @@ details{
 .group.search{
     flex-grow: 1;
 }
-#reset-button {
+.btn-secondary {
+    background: none;
+    color: var(--text-color);
+    padding: 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+#reset-button{
     background: none;
     border: 2px solid var(--text-color);
     color: var(--text-color);
@@ -433,6 +461,11 @@ details{
     background: #00000033;
 }
 
+#link-list-content{
+    max-height: 800px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
 .link-item {
     display: flex;
     align-items: center;
@@ -498,6 +531,8 @@ details{
 }
 .actions {
     width: 10%;
+    display: flex;
+    justify-content: flex-end;
 }
 
 #user-list {

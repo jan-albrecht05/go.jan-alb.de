@@ -3,6 +3,59 @@ header('Content-Type: application/json');
 $db_path = __DIR__ . '/../database.db';
 $pdo = new PDO("sqlite:$db_path");
 
+// -----------------------------
+// Funktionen
+// -----------------------------
+
+// Link Sichtbarkeit ändern
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+
+    $input = json_decode(file_get_contents('php://input'), true);
+
+    $action = $input['action'] ?? '';
+
+    switch ($action) {
+
+        case 'changeVisibility':
+
+            $id = (int)($input['id'] ?? 0);
+
+            echo json_encode(changeVisibility($id));
+            exit;
+
+        default:
+
+            echo json_encode([
+                'success' => false,
+                'message' => 'Unknown action'
+            ]);
+            exit;
+    }
+
+}
+
+function changeVisibility($linkId) { 
+    global $pdo; 
+    // Prüfen, ob der Link existiert 
+    $stmt = $pdo->prepare("SELECT * FROM shortlinks WHERE id = :id"); 
+    $stmt->execute([':id' => $linkId]); 
+    $link = $stmt->fetch(PDO::FETCH_ASSOC); 
+    
+    if (!$link) { 
+        return ['success' => false, 'message' => 'Link not found']; 
+    } 
+    // Sichtbarkeit umschalten 
+    $newStatus = $link['active'] ? 0 : 1; 
+    $updateStmt = $pdo->prepare("UPDATE shortlinks SET active = :active WHERE id = :id"); 
+    $updateStmt->execute([':active' => $newStatus, ':id' => $linkId]);
+        return ['success' => true, 'newStatus' => $newStatus]; 
+}
+
+
+// -----------------------------
+// Standardmäßig alle Links abrufen
+// -----------------------------
 
 // -----------------------------
 // Filter
@@ -46,30 +99,13 @@ $params = [];
 // Status
 if ($status === 'active') {
 
-    $where[] = "
-        active = 1
-        AND (
-            expires_at IS NULL
-            OR expires_at > datetime('now')
-        )
-    ";
+    $where[] = "active = 1";
 
 }
 
-if ($status === 'expired') {
+if ($status === 'inactive') {
 
-    $where[] = "
-        expires_at IS NOT NULL
-        AND expires_at <= datetime('now')
-    ";
-
-}
-
-if ($status === 'disabled') {
-
-    $where[] = "
-        active = 0
-    ";
+    $where[] = "active = 0";
 
 }
 

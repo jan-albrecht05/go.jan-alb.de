@@ -176,9 +176,17 @@
             modal.style.display = 'block';
         }
     </script>
+    <style>
+        #footer {
+            position: relative;
+            margin-top: 5rem;
+        }
+    </style>
+    <link rel="stylesheet" href="admin.css">
 </head>
 <body style="height:auto; min-height:100vh; overflow-x:visible;">
     <div id="main">
+        <button id="logout-button" class="btn-secondary" onclick="window.location.href='logout.php'">Abmelden</button>
         <h1>Admin-Panel</h1>
         <div class="section" id="overview">
             <h2>Übersicht</h2>
