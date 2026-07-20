@@ -274,9 +274,29 @@
                     
                     <!-- Links werden hier dynamisch geladen -->
                 </div>
-
             </div>
         </div>
+
+        <div class="section" id="url-overview">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js" defer></script>
+            <script src="analytics.js" defer></script>
+            <h2>URL-Übersicht</h2>
+            <div class="analytics-header">
+                <select id="analytics-sort">
+                    <option value="links">Nach Links</option>
+                    <option value="clicks">Nach Klicks</option>
+                </select>
+            </div>
+            <div class="analytics">
+                <div class="chart" id="domainPieChart">
+                    <canvas id="domainPie"></canvas>
+                </div>
+                <div class="chart" id="domainBarChart">
+                    <canvas id="domainBar"></canvas>
+                </div>
+            </div>
+        </div>
+
 
         <div class="section" id="user-management">
             <h2>Benutzerverwaltung</h2>

@@ -124,19 +124,6 @@ if(!$show_password_form && empty($errors)) {
         $errors[] = 'Maximale Aufrufe erreicht';
         $show_normal_form = false;
     }
-    // Klick zählen
-    $pdo->prepare("
-        UPDATE shortlinks
-        SET clicks = clicks + 1
-        WHERE id = ?
-    ")->execute([$link['id']]);
-
-    // Letzten Klickzeitpunkt aktualisieren
-    $pdo->prepare("
-        UPDATE shortlinks
-        SET last_click = CURRENT_TIMESTAMP
-        WHERE id = ?
-    ")->execute([$link['id']]);
 }
 
 if ($link['type'] === 'file') {
@@ -158,11 +145,37 @@ if ($link['type'] === 'file') {
 }}
 if (!$show_password_form && empty($errors)) {
     if ($link['type'] === 'url') {
+        // Klick zählen
+        $pdo->prepare("
+            UPDATE shortlinks
+            SET clicks = clicks + 1
+            WHERE id = ?
+        ")->execute([$link['id']]);
+
+        // Letzten Klickzeitpunkt aktualisieren
+        $pdo->prepare("
+            UPDATE shortlinks
+            SET last_click = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ")->execute([$link['id']]);
         header('Location: ' . $link['target'], true, 302);
         $show_normal_form = false;
         exit;
     }
     if ($link['type'] === 'file') {
+        // Klick zählen
+        $pdo->prepare("
+            UPDATE shortlinks
+            SET clicks = clicks + 1
+            WHERE id = ?
+        ")->execute([$link['id']]);
+
+        // Letzten Klickzeitpunkt aktualisieren
+        $pdo->prepare("
+            UPDATE shortlinks
+            SET last_click = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ")->execute([$link['id']]);
         readfile($file);
         exit;
     }

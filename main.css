@@ -653,9 +653,15 @@ option:hover {
         font-size:1.8rem;
         text-align:center;
     }
+    .switch{
+        min-width: 40px;
+    }
     .row{
         flex-direction:column;
         align-items:stretch;
+    }
+    #settings .row{
+        flex-direction:row;
     }
     .row input{
         width:100%;
