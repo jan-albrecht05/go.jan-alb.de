@@ -7,7 +7,7 @@ date_default_timezone_set('Europe/Berlin');
 $is_admin = $_SESSION['is_admin'] ?? false;
 
 // Hauptdatenbankverbindung
-$db_path = __DIR__ . '/../database.db';
+$db_path = __DIR__ . '/database.db';
 $pdo = new PDO("sqlite:$db_path");
 $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $message = null;
