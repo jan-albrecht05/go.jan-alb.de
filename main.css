@@ -634,6 +634,20 @@ option:hover {
     font-weight: bold;
     cursor: pointer;
 }
+a.back-button{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    text-decoration: none;
+    color: var(--text-color);
+    font-size: 1rem;
+    margin-bottom: 20px;
+    transition: text-decoration 0.2s ease;
+}
+a.back-button:hover .back-text{
+    text-decoration: underline;
+}
+
 
 
 

@@ -187,6 +187,10 @@
 <body style="height:auto; min-height:100vh; overflow-x:visible;">
     <div id="main">
         <button id="logout-button" class="btn-secondary" onclick="window.location.href='logout.php'">Abmelden</button>
+        <a href="index.php" class="back-button">
+            <span class="material-symbols-outlined">arrow_back</span> 
+            <span class="back-text">Zurück</span>
+        </a>
         <h1>Admin-Panel</h1>
         <div class="section" id="overview">
             <h2>Übersicht</h2>

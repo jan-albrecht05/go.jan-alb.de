@@ -17,6 +17,7 @@ $success = null;
 $shortlink = null;
 $show_normal_form = true;
 $show_password_form = false;
+$type = 'url';
 
 $serverName = $_SERVER['SERVER_NAME'];
 
@@ -36,7 +37,10 @@ $pdo->exec("
         password_hash VARCHAR(255) NULL,
         max_clicks INT NULL,
         last_click DATETIME NULL,
-        created_by INT NULL
+        created_by INT NULL,
+        original_filename TEXT NULL,
+        file_size INTEGER NULL,
+        downloads INT DEFAULT 0
     )
 ");
 
@@ -44,6 +48,9 @@ $pdo->exec("
 // get hash from URL
 $hash = $_GET['hash'] ?? '';
 if($hash !== '') {
+
+    // Abgelaufene Datei-Links aufräumen, bevor auf einen Link zugegriffen wird
+    cleanupExpiredFiles($pdo);
 
     // validate hash format
     if (!preg_match('/^[A-Za-z0-9]{1,255}$/', $hash)) {
@@ -127,22 +134,59 @@ if(!$show_password_form && empty($errors)) {
 }
 
 if ($link['type'] === 'file') {
-
-    $file = $link['target'];
-
-    if (!file_exists($file)) {
-        http_response_code(404);
-        $errors[] = 'Datei nicht gefunden';
-        $show_normal_form = false;
+    // Passwortschutz prüfen
+    if ($link['password_hash'] && empty($errors)) {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            $show_password_form = true;
+        } else {
+            if (!password_verify($_POST['password'] ?? '', $link['password_hash'])) {
+                $show_password_form = true;
+                $errors[] = 'Falsches Passwort';
+            }
+        }
     }
 
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . basename($file) . '"');
-    header('Content-Length: ' . filesize($file));
-
-    readfile($file);
-    $show_normal_form = false;
+    $file = $link['target'];
+    // Datei nur ausliefern, wenn kein Passwort fehlt/falsch ist und keine anderen Fehler vorliegen
+    if (!$show_password_form && empty($errors)) {
+        if (!file_exists($file)) {
+            http_response_code(404);
+            $errors[] = 'Datei nicht gefunden';
+            $show_normal_form = false;
+        } else {
+            header('Content-Type: application/octet-stream');
+            header('Content-Disposition: attachment; filename="' . basename($file) . '"');
+            header('Content-Length: ' . filesize($file));
+            readfile($file);
+            $show_normal_form = false;
+            // Klick zählen
+            $pdo->prepare("
+                UPDATE shortlinks
+                SET clicks = clicks + 1,
+                    downloads = downloads + 1,
+                    last_click = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ")->execute([$link['id']]);
+            // letzen Klickzeitpunkt aktualisieren
+            $pdo->prepare("
+                UPDATE shortlinks
+                SET last_click = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ")->execute([$link['id']]);
+            // Download zählen
+            $pdo->prepare("
+                UPDATE shortlinks
+                SET downloads = downloads + 1
+                WHERE id = ?
+            ")->execute([$link['id']]);
+            // auf download start warten, dann redirect
+            sleep(1);
+            header('Location: index.php');
+            exit;
+        }
+    }
 }}
+
 if (!$show_password_form && empty($errors)) {
     if ($link['type'] === 'url') {
         // Klick zählen
@@ -199,6 +243,33 @@ function generateHash(int $length = 6): string
     return $hash;
 }
 
+/**
+ * Sucht alle aktiven Datei-Links, die älter als $maxAgeDays sind,
+ * löscht die zugehörige Datei von der Platte und setzt den Link
+ * auf active = 0. Kein Cron nötig - wird einfach bei jedem Upload
+ * und bei jedem Linkzugriff mit aufgerufen ("lazy cleanup").
+ */
+function cleanupExpiredFiles(PDO $pdo, int $maxAgeDays = 30): void{
+    $cutoff = date('Y-m-d H:i:s', strtotime('-' . $maxAgeDays . ' days'));
+    $stmt = $pdo->prepare("
+        SELECT id, target FROM shortlinks WHERE type = 'file' AND active = 1 AND created_at < ?
+    ");
+    $stmt->execute([$cutoff]);
+    $expired = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!$expired) {
+        return;
+    }
+
+    $deactivate = $pdo->prepare("UPDATE shortlinks SET active = 0 WHERE id = ?");
+    foreach ($expired as $row) {
+        if (!empty($row['target']) && file_exists($row['target'])) {
+            @unlink($row['target']);
+        }
+        $deactivate->execute([$row['id']]);
+    }
+}
+
 // no hash provided, show normal HTML
 
 ?>
@@ -207,20 +278,41 @@ function generateHash(int $length = 6): string
 <?php
 // form handling
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create') {
+
+    // Abgelaufene Datei-Links aufräumen, bevor auf einen Link zugegriffen wird
+    cleanupExpiredFiles($pdo);
     
     $target = $_POST['target'] ?? '';
-    if (!str_starts_with($target, 'http://') && !str_starts_with($target, 'https://')) {
-    $target = 'https://' . $target;
-}
-    $type = $_POST['type'] ?? 'url';
-    // validate URL
-    if (!filter_var($target, FILTER_VALIDATE_URL)) {
-        $errors [] = 'Bitte eine gültige URL eingeben.';
+    $type = $_POST['type'] ?? null;
+    if ($type === "url") {
+        if (!str_starts_with($target, 'http://') &&
+            !str_starts_with($target, 'https://')) {
+            $target = 'https://' . $target;
+        }
+        if (!filter_var($target, FILTER_VALIDATE_URL)) {
+            $errors[] = "Bitte gültige URL eingeben.";
+        }
+        $url = parse_url($target, PHP_URL_HOST);
+    } else {
+        // Datei
+        $url = null;
+        $type = 'file';
+        $target = $_POST['target'] ?? '';
+        if (!file_exists($target)) {
+            $errors[] = "Datei existiert nicht.";
+        }
+        if (empty($target)) {
+            $errors[] = "Keine Datei hochgeladen.";
+        }
     }
+
     // extract the URL from the target if needed
     if ($type === 'url') {
         $url = parse_url($target, PHP_URL_HOST); // parse URL for type 'url' from the target
+    } else{
+        $url = null; // for type 'file', set URL to null
     }
+    
     $active = $_POST['active'] ?? 1;
     $expires_at = $_POST['expires_at'] ?? null;
     $password_protect = isset($_POST['password_protect']) ? true : false;
@@ -306,6 +398,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     <title>Short-Link erstellen</title>
     <link rel="stylesheet" href="main.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <script src="upload-files.js" defer></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             document.getElementById("target").focus();
@@ -319,6 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
             });
         }
     </script>
+    
 </head>
 <body>
     <?php if($message): ?>
@@ -362,7 +456,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     <?php else:  ?>
     <?php if($show_normal_form): ?>
     <!-- normales Formular -->
-    <div id="box">
+    <div id="box" class="drop-zone">
         <h1>Short-Link erstellen</h1>
         <form action="index.php" method="post">
             <input type="hidden" name="action" value="create">
@@ -371,10 +465,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
                 <input type="text" id="target" name="target" required>
                 <button type="submit">Link erstellen</button>
             </div>
-            <input type="hidden" name="type" value="url">
             <input type="hidden" name="hash" value="">
             <input type="hidden" name="active" value="1">
             <input type="hidden" name="timecode" value="<?php echo time(); ?>">
+            <div id="file-wrapper">
+                <div id="file-name"></div>
+                <div id="file-size"></div>
+                <div id="upload-progress" class="hidden-input">
+                    <div id="upload-progress-bar"></div>
+                </div>
+            </div>
+            <input type="file" id="file-input" hidden>
+            <input type="hidden" id="type" name="type" value="url">
             <details id="settings">
                 <summary>
                     <h3>Optionen</h3>

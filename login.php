@@ -44,6 +44,10 @@
 </head>
 <body>
     <div id="box">
+        <a href="index.php" class="back-button">
+            <span class="material-symbols-outlined">arrow_back</span> 
+            <span class="back-text">Zurück</span>
+        </a>
         <h1>Admin-Bereich</h1>
         <?php if ($message): ?>
             <p style="color: green;"><?php echo htmlspecialchars($message); ?></p>
