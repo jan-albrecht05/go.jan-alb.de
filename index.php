@@ -397,6 +397,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Short-Link erstellen</title>
     <link rel="stylesheet" href="main.css">
+    <link rel="icon" href="logo.png" type="image/x-icon">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <script src="upload-files.js" defer></script>
     <script>
